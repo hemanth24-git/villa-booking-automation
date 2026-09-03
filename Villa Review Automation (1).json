@@ -1,0 +1,599 @@
+{
+  "name": "Villa Review Automation",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Villa Review Automation\n\n**What it does:** pulls latest Google reviews, drafts a warm reply to each (happy or unhappy tone), logs them to a sheet marked 'Pending Approval', and writes an owner insight brief.\n\n**IMPORTANT:** replies are DRAFTS saved to the sheet for the owner to review and post manually. It does NOT auto-post to Google. That's intentional — a human should approve public replies.\n\n**Before running, edit:**\n1. Apify node -> your Apify token + [VILLA_NAME], [LOCATION]\n2. Both reply-draft nodes -> replace [VILLA_NAME], [LOCATION]\n3. Insight node -> nothing to edit\n4. Both Google Sheets nodes -> your Sheet ID + reconnect Google credential (needs a 'Reviews' tab and an 'Insights' tab)\n5. All OpenAI nodes -> reconnect your OpenAI credential\n6. To automate daily: swap the manual trigger for a Schedule Trigger (e.g. every morning 8 AM)\n7. Per new client: duplicate this whole workflow, repeat steps 1-4 for their villa/sheet",
+        "height": 360,
+        "width": 420,
+        "color": 4
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        1408,
+        320
+      ],
+      "typeVersion": 1,
+      "id": "3535c28f-751d-4684-85bf-b80d1b3aff20",
+      "name": "Setup Notes"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.apify.com/v2/acts/compass~crawler-google-places/run-sync-get-dataset-items",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer PUT_YOUR_TOKEN_HERE"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ {\n  \"searchStringsArray\": [\"[VILLA_NAME], [LOCATION]\"],\n  \"maxCrawledPlacesPerSearch\": 1,\n  \"maxReviews\": 15,\n  \"reviewsSort\": \"newest\",\n  \"language\": \"en\"\n} }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "id": "7a852768-9d70-4722-922d-763fe7ce6814",
+      "name": "Get Google Reviews (Apify)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        160,
+        288
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const out = [];\nfor (const item of $input.all()) {\n  const p = item.json;\n  const reviews = Array.isArray(p.reviews) ? p.reviews : ((p.text || p.stars) ? [p] : []);\n  for (const r of reviews) {\n    out.push({ json: {\n      reviewer: r.name || r.reviewerName || 'A guest',\n      text: r.text || r.textTranslated || '(rating only, no written review)',\n      rating: Number(r.stars ?? r.rating ?? 0),\n      date: r.publishedAtDate || r.publishAt || '',\n      url: r.reviewUrl || r.url || ''\n    }});\n  }\n}\nreturn out;"
+      },
+      "id": "579fb33b-51d4-44ef-904c-4d21f010d341",
+      "name": "Flatten & Normalize Reviews",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        352,
+        288
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "rv-cond-happy",
+              "leftValue": "={{ $json.rating }}",
+              "rightValue": 4,
+              "operator": {
+                "type": "number",
+                "operation": "gte"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "029dbac1-7d06-4ba8-8262-ea2e01854d16",
+      "name": "Happy or Unhappy?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        576,
+        288
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openAiApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { \"model\":\"gpt-4o-mini\", \"temperature\":0.7, \"messages\":[ {\"role\":\"system\",\"content\":\"You are the host and owner of [VILLA_NAME], a boutique villa in [LOCATION]. Write a warm, genuine, personal PUBLIC reply to this positive Google review from a guest who stayed with you. Rules: 2-3 short sentences; sound like a real, warm host, not a corporate template; reference something specific they mentioned (the view, the food, the pool, the staff, etc.); thank them by first name if given; warmly invite them to come back and stay again. Reply with ONLY the reply text, nothing else.\"}, {\"role\":\"user\",\"content\":\"Reviewer: \"+$json.reviewer+\"\\nRating: \"+$json.rating+\" stars\\nReview: \"+$json.text} ] } }}",
+        "options": {}
+      },
+      "id": "8d1c39f5-768e-440d-909b-5bcd5dd9335a",
+      "name": "Draft Happy Reply",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        800,
+        160
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "3KsiYOQqnRX3DnBG",
+          "name": "OpenAI account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openAiApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { \"model\":\"gpt-4o-mini\", \"temperature\":0.6, \"messages\":[ {\"role\":\"system\",\"content\":\"You are the host and owner of [VILLA_NAME], a boutique villa in [LOCATION]. Write a calm, empathetic, gracious PUBLIC reply to this less-than-positive Google review from a guest. Rules: 2-3 short sentences; sincerely acknowledge their experience fell short WITHOUT being defensive or making excuses; thank them for the honest feedback; warmly invite them to contact you directly by phone or WhatsApp so you can make it right and host them better next time. Never argue or blame the guest. Reply with ONLY the reply text, nothing else.\"}, {\"role\":\"user\",\"content\":\"Reviewer: \"+$json.reviewer+\"\\nRating: \"+$json.rating+\" stars\\nReview: \"+$json.text} ] } }}",
+        "options": {}
+      },
+      "id": "e5e0d5cf-a494-46a2-a788-10eba37ea455",
+      "name": "Draft Careful Reply",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        800,
+        400
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "3KsiYOQqnRX3DnBG",
+          "name": "OpenAI account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const reply = (($json.choices && $json.choices[0] && $json.choices[0].message.content) || '').trim();\nconst r = $('Flatten & Normalize Reviews').item.json;\nconst sentiment = (Number(r.rating) >= 4) ? 'Positive' : 'Needs Attention';\nreturn {\n  REVIEWER: r.reviewer,\n  RATING: r.rating,\n  SENTIMENT: sentiment,\n  REVIEW: r.text,\n  DRAFT_REPLY: reply,\n  STATUS: 'Pending Approval',\n  REVIEW_DATE: r.date,\n  REVIEW_URL: r.url,\n  GENERATED_AT: new Date().toISOString()\n};"
+      },
+      "id": "ce280f97-90f8-4c5b-af06-9145cd7b7aed",
+      "name": "Build Happy Row",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1024,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const reply = (($json.choices && $json.choices[0] && $json.choices[0].message.content) || '').trim();\nconst r = $('Flatten & Normalize Reviews').item.json;\nconst sentiment = (Number(r.rating) >= 4) ? 'Positive' : 'Needs Attention';\nreturn {\n  REVIEWER: r.reviewer,\n  RATING: r.rating,\n  SENTIMENT: sentiment,\n  REVIEW: r.text,\n  DRAFT_REPLY: reply,\n  STATUS: 'Pending Approval',\n  REVIEW_DATE: r.date,\n  REVIEW_URL: r.url,\n  GENERATED_AT: new Date().toISOString()\n};"
+      },
+      "id": "f58b0848-b181-48df-840a-84c9efc743ba",
+      "name": "Build Careful Row",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1024,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "16SvkFR9AyD9l-1_B_5_tEOmzmg_R2MHU-7D3mzq9-Tc",
+          "mode": "list",
+          "cachedResultName": "villa leads ",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/16SvkFR9AyD9l-1_B_5_tEOmzmg_R2MHU-7D3mzq9-Tc/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 83132250,
+          "mode": "list",
+          "cachedResultName": "review dashboard",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/16SvkFR9AyD9l-1_B_5_tEOmzmg_R2MHU-7D3mzq9-Tc/edit#gid=83132250"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "REVIEWER": "={{ $json.REVIEWER }}",
+            "RATING": "={{ $json.RATING }}",
+            "SENTIMENT": "={{ $json.SENTIMENT }}",
+            "REVIEW": "={{ $json.REVIEW }}",
+            "DRAFT_REPLY": "={{ $json.DRAFT_REPLY }}",
+            "STATUS": "={{ $json.STATUS }}",
+            "REVIEW_DATE": "={{ $json.REVIEW_DATE }}",
+            "REVIEW_URL": "={{ $json.REVIEW_URL }}",
+            "GENERATED_AT": "={{ $json.GENERATED_AT }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "REVIEWER",
+              "displayName": "REVIEWER",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "RATING",
+              "displayName": "RATING",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "SENTIMENT",
+              "displayName": "SENTIMENT",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "REVIEW",
+              "displayName": "REVIEW",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "DRAFT_REPLY",
+              "displayName": "DRAFT_REPLY",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "STATUS",
+              "displayName": "STATUS",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "REVIEW_DATE",
+              "displayName": "REVIEW_DATE",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "REVIEW_URL",
+              "displayName": "REVIEW_URL",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "GENERATED_AT",
+              "displayName": "GENERATED_AT",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "6d87718e-5a5a-4cb6-b0ce-3f5bc9398277",
+      "name": "Add to Reviews Dashboard",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        1232,
+        288
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "bsL5g8vy8VWfzxg8",
+          "name": "Google Sheets OAuth2 API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst lines = items.map((it,i)=>{ const r=it.json; return `${i+1}. [${r.rating} stars] ${r.reviewer}: ${r.text}`; }).join('\\n');\nreturn [{ json: { digest: lines, count: items.length } }];"
+      },
+      "id": "2213d129-9476-403c-ac7e-a524effe33fb",
+      "name": "Summarize All Reviews",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        576,
+        624
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openAiApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { \"model\":\"gpt-4o-mini\", \"temperature\":0.4, \"messages\":[ {\"role\":\"system\",\"content\":\"You are a hospitality business analyst for a boutique villa. Read ALL these Google reviews together and give the owner a short, punchy insight brief. Output exactly: 2-3 bullet points on recurring THEMES (what guests repeatedly praise or complain about, with rough counts like '4 of 15'), then a final line starting 'RECOMMENDED ACTION:' naming the single most valuable fix or improvement. Be specific and concrete — mention things like cleanliness, food, staff, check-in experience, amenities, value. No fluff, no preamble.\"}, {\"role\":\"user\",\"content\":$json.digest} ] } }}",
+        "options": {}
+      },
+      "id": "41580ff4-4d60-4486-b15d-71e4fb2506bd",
+      "name": "Draft Insight",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        800,
+        624
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "3KsiYOQqnRX3DnBG",
+          "name": "OpenAI account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const insight = (($json.choices && $json.choices[0].message.content)||'').trim();\nconst cnt = $('Summarize All Reviews').first().json.count;\nreturn [{ json: { DATE: new Date().toISOString().slice(0,10), REVIEWS_ANALYZED: cnt, INSIGHT: insight } }];"
+      },
+      "id": "8bbcdb5a-2776-44b3-80d4-14c93c1dcd8c",
+      "name": "Build Insight Row",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1024,
+        624
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "16SvkFR9AyD9l-1_B_5_tEOmzmg_R2MHU-7D3mzq9-Tc",
+          "mode": "list",
+          "cachedResultName": "villa leads ",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/16SvkFR9AyD9l-1_B_5_tEOmzmg_R2MHU-7D3mzq9-Tc/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 253099397,
+          "mode": "list",
+          "cachedResultName": "insight dashboard",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/16SvkFR9AyD9l-1_B_5_tEOmzmg_R2MHU-7D3mzq9-Tc/edit#gid=253099397"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "DATE": "={{ $json.DATE }}",
+            "REVIEWS_ANALYZED": "={{ $json.REVIEWS_ANALYZED }}",
+            "INSIGHT": "={{ $json.INSIGHT }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "DATE",
+              "displayName": "DATE",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "REVIEWS_ANALYZED",
+              "displayName": "REVIEWS_ANALYZED",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "INSIGHT",
+              "displayName": "INSIGHT",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "7b6079dd-c011-4a3f-ab4f-d6de7eab4959",
+      "name": "Add Insight to Dashboard",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        1232,
+        624
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "bsL5g8vy8VWfzxg8",
+          "name": "Google Sheets OAuth2 API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "daysInterval": 2,
+              "triggerAtHour": 9
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        -48,
+        288
+      ],
+      "id": "001d2f95-6ea6-461b-9175-93e4a5fddeac",
+      "name": "Schedule Trigger"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Get Google Reviews (Apify)": {
+      "main": [
+        [
+          {
+            "node": "Flatten & Normalize Reviews",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Flatten & Normalize Reviews": {
+      "main": [
+        [
+          {
+            "node": "Happy or Unhappy?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Summarize All Reviews",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Happy or Unhappy?": {
+      "main": [
+        [
+          {
+            "node": "Draft Happy Reply",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Draft Careful Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Draft Happy Reply": {
+      "main": [
+        [
+          {
+            "node": "Build Happy Row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Draft Careful Reply": {
+      "main": [
+        [
+          {
+            "node": "Build Careful Row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Happy Row": {
+      "main": [
+        [
+          {
+            "node": "Add to Reviews Dashboard",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Careful Row": {
+      "main": [
+        [
+          {
+            "node": "Add to Reviews Dashboard",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Summarize All Reviews": {
+      "main": [
+        [
+          {
+            "node": "Draft Insight",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Draft Insight": {
+      "main": [
+        [
+          {
+            "node": "Build Insight Row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Insight Row": {
+      "main": [
+        [
+          {
+            "node": "Add Insight to Dashboard",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "25df80f7-9363-4aa7-ab0d-d5cbb19e4b40",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "8d9dac95c4de7e9bf882e0f79332c3c9f1e005091cdd7c78a619a71a44712e1d"
+  },
+  "nodeGroups": [],
+  "id": "D4RF9iXA2GBP0ZZv",
+  "tags": []
+}

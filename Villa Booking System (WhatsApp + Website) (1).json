@@ -1,0 +1,1203 @@
+{
+  "name": "Villa Booking System (WhatsApp + Website)",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## VILLA BOOKING SYSTEM\n\nTwo booking channels, ONE shared Google Calendar + Sheet. Whichever books first wins — the other sees it as taken.\n\n**Channel 1 — WhatsApp bot (Maya)**\nGuest chats -> AI collects name/dates/guests -> checks calendar -> books or tells guest it's taken -> notifies owner.\n\n**Channel 2 — Website**\nGuest picks dates on the live calendar (booked dates greyed out) -> submits form -> re-checks calendar (race-condition safe) -> books or returns 409 conflict -> notifies owner.\n\n**Per-client setup checklist:**\n1. AI Agent system message -> villa name, location, rooms, prices, amenities\n2. ALL Google Calendar nodes -> select this client's dedicated calendar\n3. ALL Google Sheets nodes -> this client's sheet/tab\n4. ALL Twilio nodes -> reconnect credential, set owner's WhatsApp number\n5. Confirmation messages -> villa name\n6. Webhook paths -> make unique per client (e.g. villa-whatsapp-sunsetvilla) if running multiple clients on one n8n instance\n7. Copy both website webhook Production URLs into that client's villa.js (availabilityWebhookUrl, bookingWebhookUrl)\n\n**Known-good field formats (do not deviate):**\n- Google Calendar Get Many nodes: use 'After'/'Before' fields (NOT 'returnAll' unless intentionally fetching everything), values as plain 'YYYY-MM-DDTHH:MM:SS' — no trailing Z, no milliseconds\n- All Twilio sends use HTTP Request + Basic Auth (not the Twilio node) for reliability",
+        "height": 480,
+        "width": 480,
+        "color": 4
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        2096,
+        -496
+      ],
+      "typeVersion": 1,
+      "id": "d856719f-6f1a-43ea-a706-2c58cdc95f7e",
+      "name": "READ ME FIRST"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "villa-whatsapp",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -320,
+        -256
+      ],
+      "id": "6fae30f9-e0a5-4359-b4c1-f5c83da8c194",
+      "name": "WhatsApp Webhook",
+      "webhookId": "villa-whatsapp-bot-webhook"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.body.Body }}",
+        "options": {
+          "systemMessage": "# Identity\nYou are Maya, the WhatsApp assistant for Misty Ridge Estate, a boutique villa in Madikeri, Coorg. You answer guest questions and help them book their stay directly in chat.\n\n# Villa Info\nCheck-in: 1 PM | Check-out: 11 AM\n\n# Rooms & Pricing\n- Valley View Suite: ₹8,500/night — sleeps 2\n- Garden Cottage: ₹6,500/night — sleeps 3\n- Family Villa: ₹14,000/night — sleeps 6\n\n# Amenities\nInfinity pool, free WiFi, estate-grown coffee & home-cooked meals, private parking, pet-friendly, bonfire & BBQ, 24/7 caretaker\n\n# Your Job\n\n# IF A BOOKING IS ALREADY CONFIRMED\nIf you can see anywhere earlier in this conversation that you already sent a BOOKING_CONFIRMED block for this guest, their booking is done. For any further questions after that point:\n- Just answer the question directly.\n- Do NOT ask \"Would you like me to check availability for your dates?\"\n- Do NOT restart the booking flow or ask for name/dates/guests again.\n- Only re-enter the booking flow if the guest explicitly says they want to change, reschedule, or cancel their dates.\n\n1. If the guest asks a question -> answer clearly and briefly, then ask:\n   \"Would you like me to check availability for your dates?\"\n   EXCEPTION: if a booking has already been confirmed earlier in this conversation (you already sent a BOOKING_CONFIRMED block), do NOT ask this closing question again. Just answer the question and stop.\n2. If the guest wants to book -> collect these 4 details, ONE AT A TIME:\n   - Full Name\n   - Check-in Date\n   - Check-out Date\n   - Number of Guests\n   (Phone number is already known from their WhatsApp number)\n3. The MOMENT you have collected all 4 details (name, checkin, checkout, guests), your VERY NEXT message must be ONLY the BOOKING_CONFIRMED block below — nothing else. Do not say \"let me check\", do not say \"I'll get back to you\", do not say \"confirming now\". Do not ask for a phone number — it is never required, you already have it from WhatsApp. Output ONLY this, with real values filled in:\nBOOKING_CONFIRMED\nname: [name]\ncheckin: [checkin date in DD-MM-YYYY format]\ncheckout: [checkout date in DD-MM-YYYY format]\nguests: [number of guests]\n\n# Critical Rules — read carefully\n- Accept ANY date the guest gives you, in whatever format they type it (e.g. \"18th july\", \"next weekend\", \"this saturday\"). Do NOT reject a date or question its format.\n- ALWAYS convert the date to DD-MM-YYYY format in your own head before using it anywhere, including in the final BOOKING_CONFIRMED message and in any confirmation you show the guest. Assume the current year is 2026 unless the guest specifies otherwise. Example: \"25th july\" becomes \"25-07-2026\".\n- NEVER ask for a detail the guest has already given earlier in this conversation. Check what they've already told you before asking anything.\n- Ask for exactly ONE missing detail per message.\n- DO NOT check room capacity, DO NOT suggest splitting across multiple rooms, DO NOT try to match guest count to a specific room. Simply collect the number of guests as a plain number and move on — room assignment is the owner's job when they call back to confirm, not yours.\n- DO NOT offer or discuss booking multiple rooms in the same conversation. Treat every booking as a single, simple reservation with just the 4 fields above.\n- When all 4 details are collected, your FINAL message must be EXACTLY the BOOKING_CONFIRMED format above, every field filled in DD-MM-YYYY format — never leave a field blank, never reword it, never add extra text around it.\n\n# Other Rules\n- Keep replies short — this is WhatsApp, not email.\n- Never make up prices or amenities beyond what's listed above.\n- Be warm and welcoming.\n- If the guest asks whether specific dates are free, tell them you'll confirm with the owner and someone will get back to them shortly — but still collect their booking details in the meantime.\n\n# Context Awareness\nYou will be shown the recent conversation history with this guest. Always continue from where the conversation left off. Never restart or re-ask for information already provided.\n\n# Handling Reminder Replies\n- If a guest confirms (e.g. \"CONFIRM\", \"yes\", \"we'll be there\"), warmly acknowledge and say you look forward to hosting them. Keep it short.\n- If a guest wants to change dates (e.g. \"RESCHEDULE\", \"change booking\"), respond kindly, ask what new dates suit them, then re-collect using your normal booking steps."
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        -112,
+        -256
+      ],
+      "id": "9357b7b2-107c-4e05-b26c-e2c2e9596353",
+      "name": "AI Agent (Maya)"
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "value": "gpt-4o-mini",
+          "mode": "list",
+          "cachedResultName": "gpt-4o-mini"
+        },
+        "builtInTools": {},
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [
+        -224,
+        -32
+      ],
+      "id": "4836aa16-8556-4da1-ac0f-aad1d0db94d4",
+      "name": "OpenAI Chat Model",
+      "credentials": {
+        "openAiApi": {
+          "id": "3KsiYOQqnRX3DnBG",
+          "name": "OpenAI account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sessionIdType": "customKey",
+        "sessionKey": "={{ $json.body.From }}"
+      },
+      "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+      "typeVersion": 1.4,
+      "position": [
+        -48,
+        -32
+      ],
+      "id": "a7808431-fec1-4248-8467-9720f1d12fcf",
+      "name": "Simple Memory"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "cond-booking-confirmed",
+              "leftValue": "={{ $json.output }}",
+              "rightValue": "BOOKING_CONFIRMED",
+              "operator": {
+                "type": "string",
+                "operation": "contains"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        256,
+        -256
+      ],
+      "id": "ddb2c0f2-329a-4ccd-9725-27724e2671d5",
+      "name": "Is Booking Confirmed?"
+    },
+    {
+      "parameters": {
+        "jsCode": "const text = $input.first().json.output;\n\nconst name = text.match(/name:\\s*(.+)/i)?.[1]?.trim() || \"\";\nconst checkin = text.match(/checkin:\\s*(.+)/i)?.[1]?.trim() || \"\";\nconst checkout = text.match(/checkout:\\s*(.+)/i)?.[1]?.trim() || \"\";\nconst guests = text.match(/guests:\\s*(.+)/i)?.[1]?.trim() || \"\";\nconst phone = ($('WhatsApp Webhook').first().json.body.From || \"\").replace('whatsapp:', '');\n\nconst parts = name.split(' ');\nconst firstName = parts.shift() || name;\nconst lastName = parts.join(' ');\n\nreturn [{ json: { name, firstName, lastName, checkin, checkout, guests, phone, email: \"\" } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        496,
+        -352
+      ],
+      "id": "7ead8b57-fca7-48f4-8011-a58da789563d",
+      "name": "Parse Booking Details"
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first().json;\n\nfunction toISO(dateStr) {\n  const parts = dateStr.split('-');\n  if (parts.length !== 3) return null;\n  const [dd, mm, yyyy] = parts;\n  return `${yyyy}-${mm.padStart(2,'0')}-${dd.padStart(2,'0')}`;\n}\n\nconst checkinISO = toISO(item.checkin);\nconst checkoutISO = toISO(item.checkout);\n\nreturn [{ json: { ...item, checkinISO, checkoutISO } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        688,
+        -352
+      ],
+      "id": "35298921-e3dd-466f-b281-d363340d5444",
+      "name": "Convert Dates to ISO"
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "calendar": {
+          "__rl": true,
+          "value": "178353e6aa79f39177e6add9ddef6afb21239c2e4f368fda1b59e280bcd55a01@group.calendar.google.com",
+          "mode": "list",
+          "cachedResultName": "villa trail calender"
+        },
+        "timeMin": "={{ $('Convert Dates to ISO').first().json.checkinISO }}T00:00:00",
+        "timeMax": "={{ $('Convert Dates to ISO').first().json.checkoutISO }}T00:00:00",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.3,
+      "position": [
+        864,
+        -352
+      ],
+      "id": "46dd5fee-de4c-41d6-b6f5-96c298d69d72",
+      "name": "Check Calendar (WhatsApp)",
+      "alwaysOutputData": true,
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "AMZtF1matzHFZMTy",
+          "name": "Google Calendar OAuth2 API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const events = $input.all().filter(item => item.json && item.json.id);\nconst original = $('Convert Dates to ISO').first().json;\nreturn [{ json: { ...original, eventCount: events.length } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1024,
+        -352
+      ],
+      "id": "13450037-d60e-4c09-a144-656db1f1c2cd",
+      "name": "Count Events"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "wa-cond-avail",
+              "leftValue": "={{ $json.eventCount }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1200,
+        -352
+      ],
+      "id": "52392040-37c2-415f-a622-767c7552fc4f",
+      "name": "Is Available? (WhatsApp)"
+    },
+    {
+      "parameters": {
+        "calendar": {
+          "__rl": true,
+          "value": "178353e6aa79f39177e6add9ddef6afb21239c2e4f368fda1b59e280bcd55a01@group.calendar.google.com",
+          "mode": "list",
+          "cachedResultName": "villa trail calender"
+        },
+        "start": "={{ $json.checkinISO }}",
+        "end": "={{ $json.checkoutISO }}",
+        "additionalFields": {
+          "description": "=Phone: {{ $json.phone }} | Booked via WhatsApp bot",
+          "summary": "={{ $json.name }} - {{ $json.guests }} guests"
+        }
+      },
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.3,
+      "position": [
+        1408,
+        -496
+      ],
+      "id": "d529049c-3a61-48cc-84b6-20cf9235627b",
+      "name": "Create Calendar Event (WhatsApp)",
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "AMZtF1matzHFZMTy",
+          "name": "Google Calendar OAuth2 API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "16SvkFR9AyD9l-1_B_5_tEOmzmg_R2MHU-7D3mzq9-Tc",
+          "mode": "list",
+          "cachedResultName": "villa leads ",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/16SvkFR9AyD9l-1_B_5_tEOmzmg_R2MHU-7D3mzq9-Tc/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 34469,
+          "mode": "list",
+          "cachedResultName": "bookings",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/16SvkFR9AyD9l-1_B_5_tEOmzmg_R2MHU-7D3mzq9-Tc/edit#gid=34469"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "firstName": "={{ $('Convert Dates to ISO').item.json.firstName }}",
+            "lastName": "={{ $('Convert Dates to ISO').item.json.lastName }}",
+            "phone": "={{ $('Convert Dates to ISO').item.json.phone }}",
+            "email": "={{ $('Convert Dates to ISO').item.json.email }}",
+            "checkin": "={{ $('Convert Dates to ISO').item.json.checkin }}",
+            "checkout": "={{ $('Convert Dates to ISO').item.json.checkout }}",
+            "guests": "={{ $('Convert Dates to ISO').item.json.guests }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "firstName",
+              "displayName": "firstName",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "lastName",
+              "displayName": "lastName",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "phone",
+              "displayName": "phone",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "email",
+              "displayName": "email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "checkin",
+              "displayName": "checkin",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "checkout",
+              "displayName": "checkout",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "guests",
+              "displayName": "guests",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        1712,
+        -496
+      ],
+      "id": "237c915c-ce09-4135-a1cd-2a52bd7599f3",
+      "name": "Save Booking to Sheet (WhatsApp)",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "bsL5g8vy8VWfzxg8",
+          "name": "Google Sheets OAuth2 API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "from": "whatsapp:+14155238886",
+        "to": "={{ $('WhatsApp Webhook').item.json.body.From }}",
+        "message": "=Perfect! Your stay at Misty Ridge Estate from {{ $json.checkin }} to {{ $json.checkout }} for {{ $json.guests }} guest(s) is noted. The owner will confirm availability shortly. We look forward to hosting you! 🏡",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.twilio",
+      "typeVersion": 1,
+      "position": [
+        1920,
+        -496
+      ],
+      "id": "d3336631-c510-4ac8-9217-fc43aa044eef",
+      "name": "Send Confirmation to Guest",
+      "credentials": {
+        "twilioApi": {
+          "id": "Y06EF7pnOqOdEct5",
+          "name": "Twilio account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.twilio.com/2010-04-01/Accounts/YOUR_TWILIO_ACCOUNT_SID/Messages.json",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendBody": true,
+        "contentType": "form-urlencoded",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "From",
+              "value": "whatsapp:+14155238886"
+            },
+            {
+              "name": "To",
+              "value": "={{ $('WhatsApp Webhook').item.json.body.From }}"
+            },
+            {
+              "name": "Body",
+              "value": "={{ $json.output }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        496,
+        -128
+      ],
+      "id": "7b675e90-8d51-4926-9686-d9b92f0936a5",
+      "name": "Send AI Reply to Guest",
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "CnjyZZZBkzv5fTEz",
+          "name": "Unnamed credential"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.twilio.com/2010-04-01/Accounts/YOUR_TWILIO_ACCOUNT_SID/Messages.json",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendBody": true,
+        "contentType": "form-urlencoded",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "From",
+              "value": "whatsapp:+14155238886"
+            },
+            {
+              "name": "To",
+              "value": "=whatsapp:{{ $json.phone }}"
+            },
+            {
+              "name": "Body",
+              "value": "=I'm sorry, those dates are already booked at Misty Ridge Estate. Would you like to try different dates?"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1408,
+        -208
+      ],
+      "id": "6e185c12-9442-4a30-8b08-c9243f897e0b",
+      "name": "Send Not Available (WhatsApp)",
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "CnjyZZZBkzv5fTEz",
+          "name": "Unnamed credential"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "path": "villa-availability",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -304,
+        416
+      ],
+      "id": "e2323a16-66bb-496e-ab51-6294d2c788e4",
+      "name": "Get Availability Webhook",
+      "webhookId": "villa-availability-webhook"
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "calendar": {
+          "__rl": true,
+          "value": "178353e6aa79f39177e6add9ddef6afb21239c2e4f368fda1b59e280bcd55a01@group.calendar.google.com",
+          "mode": "list",
+          "cachedResultName": "villa trail calender"
+        },
+        "returnAll": true,
+        "timeMin": "=",
+        "timeMax": "=",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.3,
+      "position": [
+        -96,
+        416
+      ],
+      "id": "9f9cc578-775e-4cd4-b6b2-64b6a7ba60f7",
+      "name": "Get All Events (Availability)",
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "AMZtF1matzHFZMTy",
+          "name": "Google Calendar OAuth2 API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const events = $input.all().filter(item => item.json && item.json.id);\n\nconst items = events.map(item => {\n  const e = item.json;\n  const startRaw = (e.start && (e.start.date || e.start.dateTime)) || '';\n  const endRaw = (e.end && (e.end.date || e.end.dateTime)) || '';\n  return { json: { start: startRaw.slice(0, 10), end: endRaw.slice(0, 10) } };\n}).filter(it => it.json.start && it.json.end);\n\nif (items.length === 0) return [{ json: { start: '', end: '' } }];\nreturn items;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        128,
+        416
+      ],
+      "id": "2be98838-42c4-4ef6-bd90-bc923f65ab78",
+      "name": "Format as Date Ranges"
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ JSON.stringify({ ranges: $input.all().map(i => i.json).filter(r => r.start && r.end) }) }}",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "name": "Access-Control-Allow-Origin",
+                "value": "*"
+              }
+            ]
+          }
+        }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        336,
+        416
+      ],
+      "id": "6aeab294-6ee6-442e-8d52-68ac9d602a25",
+      "name": "Return Availability JSON"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "villa-book",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -320,
+        672
+      ],
+      "id": "d608b321-fae1-44bd-ab33-5361cfb0682d",
+      "name": "Create Booking Webhook",
+      "webhookId": "villa-book-webhook"
+    },
+    {
+      "parameters": {
+        "jsCode": "const b = $input.first().json.body;\nreturn [{ json: {\n  name: b.name || '',\n  firstName: (b.name || '').split(' ')[0] || b.name || '',\n  lastName: (b.name || '').split(' ').slice(1).join(' '),\n  phone: b.phone || '',\n  email: b.email || '',\n  checkin: b.checkIn || '',\n  checkout: b.checkOut || '',\n  guests: b.guests || '',\n  notes: b.notes || '',\n  villa: b.villa || ''\n} }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -96,
+        672
+      ],
+      "id": "8e854dc0-5290-4ce8-b12a-e13c1b8b066e",
+      "name": "Parse Website Booking"
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "calendar": {
+          "__rl": true,
+          "value": "178353e6aa79f39177e6add9ddef6afb21239c2e4f368fda1b59e280bcd55a01@group.calendar.google.com",
+          "mode": "list",
+          "cachedResultName": "villa trail calender"
+        },
+        "returnAll": true,
+        "timeMin": "={{ $('Parse Website Booking').first().json.checkin }}T00:00:00",
+        "timeMax": "={{ $('Parse Website Booking').first().json.checkout }}T00:00:00",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.3,
+      "position": [
+        112,
+        672
+      ],
+      "id": "b9fcb848-d803-4bb2-86f1-a33aee3eb890",
+      "name": "Re-check Calendar",
+      "alwaysOutputData": true,
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "AMZtF1matzHFZMTy",
+          "name": "Google Calendar OAuth2 API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const events = $input.all().filter(item => item.json && item.json.id);\nconst original = $('Parse Website Booking').first().json;\nreturn [{ json: { ...original, eventCount: events.length } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        320,
+        672
+      ],
+      "id": "9a7ec477-bae2-4037-9fb3-49cce3c687ff",
+      "name": "Count Conflicting Events"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "site-cond-avail",
+              "leftValue": "={{ $json.eventCount }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        528,
+        672
+      ],
+      "id": "d5fd4dce-5e3f-41c7-9852-6163bfaba1cd",
+      "name": "Still Available?"
+    },
+    {
+      "parameters": {
+        "calendar": {
+          "__rl": true,
+          "value": "178353e6aa79f39177e6add9ddef6afb21239c2e4f368fda1b59e280bcd55a01@group.calendar.google.com",
+          "mode": "list",
+          "cachedResultName": "villa trail calender"
+        },
+        "start": "={{ $json.checkin }}",
+        "end": "={{ $json.checkout }}",
+        "additionalFields": {
+          "description": "=Phone: {{ $json.phone }} | Booked via website form",
+          "summary": "={{ $json.name }} - {{ $json.guests }} guests (website)"
+        }
+      },
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.3,
+      "position": [
+        736,
+        576
+      ],
+      "id": "385878fe-49c4-42f8-8309-788c862c5981",
+      "name": "Create Calendar Event (Website)",
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "AMZtF1matzHFZMTy",
+          "name": "Google Calendar OAuth2 API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "16SvkFR9AyD9l-1_B_5_tEOmzmg_R2MHU-7D3mzq9-Tc",
+          "mode": "list",
+          "cachedResultName": "villa leads ",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/16SvkFR9AyD9l-1_B_5_tEOmzmg_R2MHU-7D3mzq9-Tc/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 34469,
+          "mode": "list",
+          "cachedResultName": "bookings",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/16SvkFR9AyD9l-1_B_5_tEOmzmg_R2MHU-7D3mzq9-Tc/edit#gid=34469"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "firstName": "={{ $('Count Conflicting Events').item.json.firstName }}",
+            "lastName": "={{ $('Count Conflicting Events').item.json.lastName }}",
+            "phone": "={{ $('Count Conflicting Events').item.json.phone }}",
+            "email": "={{ $('Count Conflicting Events').item.json.email }}",
+            "checkin": "={{ $('Count Conflicting Events').item.json.checkin }}",
+            "checkout": "={{ $('Count Conflicting Events').item.json.checkout }}",
+            "guests": "={{ $('Count Conflicting Events').item.json.guests }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "firstName",
+              "displayName": "firstName",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "lastName",
+              "displayName": "lastName",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "phone",
+              "displayName": "phone",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "email",
+              "displayName": "email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "checkin",
+              "displayName": "checkin",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "checkout",
+              "displayName": "checkout",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "guests",
+              "displayName": "guests",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        944,
+        576
+      ],
+      "id": "c9fcffb3-9295-4193-8014-1fecc20106e6",
+      "name": "Save Booking to Sheet (Website)",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "bsL5g8vy8VWfzxg8",
+          "name": "Google Sheets OAuth2 API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.twilio.com/2010-04-01/Accounts/YOUR_TWILIO_ACCOUNT_SID/Messages.json",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendBody": true,
+        "contentType": "form-urlencoded",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "From",
+              "value": "whatsapp:+14155238886"
+            },
+            {
+              "name": "To",
+              "value": "=whatsapp:+919513099374"
+            },
+            {
+              "name": "Body",
+              "value": "=New WEBSITE booking\n\nGuest: {{ $('Count Conflicting Events').item.json.name }}\nPhone: {{ $('Count Conflicting Events').item.json.phone }}\nCheck-in: {{ $('Count Conflicting Events').item.json.checkin }}\nCheck-out: {{ $('Count Conflicting Events').item.json.checkout }}\nGuests: {{ $('Count Conflicting Events').item.json.guests }}\n\nAdded to your calendar automatically."
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1152,
+        576
+      ],
+      "id": "784f35f6-b360-406a-969c-b53b698c27b7",
+      "name": "Notify Owner (Website)",
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "viG5UZ42wcsDlmN5",
+          "name": "Unnamed credential 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ JSON.stringify({ status: 'confirmed' }) }}",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "name": "Access-Control-Allow-Origin",
+                "value": "*"
+              }
+            ]
+          }
+        }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1360,
+        576
+      ],
+      "id": "2667437d-290c-42b1-9456-6ce00663fb77",
+      "name": "Respond 200 Confirmed"
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ JSON.stringify({ status: 'conflict', message: 'Those dates were just booked.' }) }}",
+        "options": {
+          "responseCode": 409,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "name": "Access-Control-Allow-Origin",
+                "value": "*"
+              }
+            ]
+          }
+        }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        736,
+        816
+      ],
+      "id": "1499b0a3-1dcd-4ea8-a8a8-a08fbfd8557d",
+      "name": "Respond 409 Conflict"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "WhatsApp Webhook": {
+      "main": [
+        [
+          {
+            "node": "AI Agent (Maya)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent (Maya)": {
+      "main": [
+        [
+          {
+            "node": "Is Booking Confirmed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent (Maya)",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Simple Memory": {
+      "ai_memory": [
+        [
+          {
+            "node": "AI Agent (Maya)",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Booking Confirmed?": {
+      "main": [
+        [
+          {
+            "node": "Parse Booking Details",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send AI Reply to Guest",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Booking Details": {
+      "main": [
+        [
+          {
+            "node": "Convert Dates to ISO",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Convert Dates to ISO": {
+      "main": [
+        [
+          {
+            "node": "Check Calendar (WhatsApp)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Calendar (WhatsApp)": {
+      "main": [
+        [
+          {
+            "node": "Count Events",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Count Events": {
+      "main": [
+        [
+          {
+            "node": "Is Available? (WhatsApp)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Available? (WhatsApp)": {
+      "main": [
+        [
+          {
+            "node": "Create Calendar Event (WhatsApp)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Not Available (WhatsApp)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Calendar Event (WhatsApp)": {
+      "main": [
+        [
+          {
+            "node": "Save Booking to Sheet (WhatsApp)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Booking to Sheet (WhatsApp)": {
+      "main": [
+        [
+          {
+            "node": "Send Confirmation to Guest",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Availability Webhook": {
+      "main": [
+        [
+          {
+            "node": "Get All Events (Availability)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get All Events (Availability)": {
+      "main": [
+        [
+          {
+            "node": "Format as Date Ranges",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format as Date Ranges": {
+      "main": [
+        [
+          {
+            "node": "Return Availability JSON",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Booking Webhook": {
+      "main": [
+        [
+          {
+            "node": "Parse Website Booking",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Website Booking": {
+      "main": [
+        [
+          {
+            "node": "Re-check Calendar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Re-check Calendar": {
+      "main": [
+        [
+          {
+            "node": "Count Conflicting Events",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Count Conflicting Events": {
+      "main": [
+        [
+          {
+            "node": "Still Available?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Still Available?": {
+      "main": [
+        [
+          {
+            "node": "Create Calendar Event (Website)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond 409 Conflict",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Calendar Event (Website)": {
+      "main": [
+        [
+          {
+            "node": "Save Booking to Sheet (Website)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Booking to Sheet (Website)": {
+      "main": [
+        [
+          {
+            "node": "Notify Owner (Website)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notify Owner (Website)": {
+      "main": [
+        [
+          {
+            "node": "Respond 200 Confirmed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "b5235b32-fa96-4ca7-8c5d-1c205ca111c2",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "8d9dac95c4de7e9bf882e0f79332c3c9f1e005091cdd7c78a619a71a44712e1d"
+  },
+  "nodeGroups": [],
+  "id": "AISBQAfB2bzJdOVy",
+  "tags": []
+}
