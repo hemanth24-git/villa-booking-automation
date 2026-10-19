@@ -1,0 +1,216 @@
+{
+  "name": "Villa Missed Call Recovery",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## MISSED CALL RECOVERY\n\n**Trigger:** Twilio's <Dial action=...> POSTs here after every forwarded call attempt to the owner, whether answered or not.\n\n**Logic:** if DialCallStatus is anything other than 'completed' (i.e. no-answer, busy, failed), the caller gets an automatic WhatsApp message from the villa's number. If the owner DID answer, nothing happens.\n\n**Twilio Console setup (done once, outside n8n):**\nThe villa's Twilio number -> Voice Configuration -> A call comes in -> TwiML Bin containing:\n<Response><Dial timeout=\"25\" action=\"<this webhook's production URL>\" method=\"POST\">+91XXXXXXXXXX</Dial></Response>\nReplace +91XXXXXXXXXX with the number calls should ring (owner's real mobile for testing).\n\n**Per-client setup -> edit the 'Check Call Status' node only:**\n- villaName\n- twilioFrom (same Twilio WhatsApp number used in the main booking workflow)\n\n**Secrets:** reconnect the Twilio HTTP Basic Auth credential after import.\n\n**This webhook must return TwiML (XML), not JSON** — it's answering Twilio's voice call flow, not a regular API caller.",
+        "height": 420,
+        "width": 520,
+        "color": 4
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -560,
+        -420
+      ],
+      "id": "80b7c96b-6bf2-5dfa-1808-3880f199ff63",
+      "name": "READ ME FIRST"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "villa-missed-call",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -560,
+        0
+      ],
+      "id": "939ec534-34c4-7d45-5d56-825f36235666",
+      "name": "Missed Call Webhook",
+      "webhookId": "villa-missed-call-webhook"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ===== PER-CLIENT CONFIG - edit these two =====\nconst villaName = 'Whispering Pines Estate';\nconst twilioFrom = 'whatsapp:+REPLACE_TWILIO_WHATSAPP_NUMBER';\n// ================================================\nconst body = $input.first().json.body || {};\nconst dialCallStatus = (body.DialCallStatus || '').toString();\nconst callerNumber = (body.From || '').toString();\nconst dialedNumber = (body.To || '').toString();\nconst callSid = (body.CallSid || '').toString();\nreturn [{ json: { dialCallStatus, callerNumber, dialedNumber, callSid, villaName, twilioFrom } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -360,
+        0
+      ],
+      "id": "03780090-e355-601e-e4d9-b11210c8cdbe",
+      "name": "Check Call Status"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c-not-completed",
+              "leftValue": "={{ $json.dialCallStatus }}",
+              "rightValue": "completed",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -160,
+        0
+      ],
+      "id": "6d671408-964f-2599-6b75-ee1517d77f33",
+      "name": "Was It Missed?"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.twilio.com/2010-04-01/Accounts/REPLACE_TWILIO_ACCOUNT_SID/Messages.json",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendBody": true,
+        "contentType": "form-urlencoded",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "From",
+              "value": "={{ $json.twilioFrom }}"
+            },
+            {
+              "name": "To",
+              "value": "=whatsapp:{{ $json.callerNumber }}"
+            },
+            {
+              "name": "Body",
+              "value": "=Hi! Sorry we missed your call 🙏 I'm Maya, {{ $json.villaName }}'s booking assistant — how can I help?"
+            }
+          ]
+        },
+        "options": {
+          "retry": {
+            "retry": {
+              "maxTries": 3,
+              "waitBetweenTries": 2000
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        60,
+        -80
+      ],
+      "id": "3e4b7846-13ca-254b-4ab0-48aa5ba9527b",
+      "name": "Send WhatsApp Recovery Message",
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "REPLACE_CREDENTIAL_ID",
+          "name": "Twilio HTTP Basic Auth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "=<Response></Response>",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "text/xml"
+              }
+            ]
+          }
+        }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        280,
+        0
+      ],
+      "id": "b2ab5f19-bdc0-b85f-f28b-167791d2519b",
+      "name": "Respond Empty TwiML"
+    }
+  ],
+  "connections": {
+    "Missed Call Webhook": {
+      "main": [
+        [
+          {
+            "node": "Check Call Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Call Status": {
+      "main": [
+        [
+          {
+            "node": "Was It Missed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Was It Missed?": {
+      "main": [
+        [
+          {
+            "node": "Send WhatsApp Recovery Message",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Empty TwiML",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send WhatsApp Recovery Message": {
+      "main": [
+        [
+          {
+            "node": "Respond Empty TwiML",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": true
+  }
+}
